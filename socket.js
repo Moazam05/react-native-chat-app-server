@@ -21,9 +21,12 @@ const initSocket = (server) => {
 
     // Handle user setup
     socket.on("setup", async (userData) => {
+      console.log("User Setup Data:", userData);
       if (!userData._id) return;
 
-      // Join user's personal room
+      // Store user data in socket instance
+      socket.userData = userData; // Add this line
+
       socket.join(userData._id);
       activeUsers.set(userData._id, socket.id);
 
@@ -71,6 +74,7 @@ const initSocket = (server) => {
 
     // Handle new messages
     socket.on("new message", async (newMessageData) => {
+      console.log("Data Received:", newMessageData);
       const chatId = newMessageData.chatId;
 
       try {
@@ -80,9 +84,9 @@ const initSocket = (server) => {
           return;
         }
 
-        // Create message in database
+        // Create message in database using sender from messageData
         const message = await Message.create({
-          sender: socket.userData?._id,
+          sender: newMessageData.sender, // Use sender from message data
           content: newMessageData.content,
           chatId: chatId,
           messageType: newMessageData.messageType || "text",
@@ -98,7 +102,7 @@ const initSocket = (server) => {
 
         // Emit message to all users in chat except sender
         chat.users.forEach((user) => {
-          if (user._id.toString() === socket.userData?._id) return;
+          if (user._id.toString() === newMessageData.sender) return;
 
           const socketId = activeUsers.get(user._id.toString());
           if (socketId) {
