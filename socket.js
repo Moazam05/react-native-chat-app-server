@@ -21,7 +21,6 @@ const initSocket = (server) => {
 
     // Handle user setup
     socket.on("setup", async (userData) => {
-      console.log("User Setup Data:", userData);
       if (!userData._id) return;
 
       // Store user data in socket instance
@@ -74,7 +73,6 @@ const initSocket = (server) => {
 
     // Handle new messages
     socket.on("new message", async (newMessageData) => {
-      console.log("Data Received:", newMessageData);
       const chatId = newMessageData.chatId;
 
       try {
