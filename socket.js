@@ -16,12 +16,27 @@ const initSocket = (server) => {
   // Store active users
   const activeUsers = new Map();
 
+  const logActiveUsers = () => {
+    console.log("\nCurrently Active Users:".bold.green);
+    if (activeUsers.size === 0) {
+      console.log("No active users".yellow);
+    } else {
+      activeUsers.forEach((socketId, userId) => {
+        console.log(`User ID: ${userId}, Socket ID: ${socketId}`.cyan);
+      });
+    }
+    console.log("Total active users:", activeUsers.size.toString().bold.blue);
+  };
+
   io.on("connection", (socket) => {
     console.log("Connected to socket.io".bold.bgRed);
 
     // Handle user setup
     socket.on("setup", async (userData) => {
       if (!userData._id) return;
+
+      // Log active users after new connection
+      logActiveUsers();
 
       // Store user data in socket instance
       socket.userData = userData; // Add this line
