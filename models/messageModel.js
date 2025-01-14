@@ -31,6 +31,23 @@ const messageSchema = new mongoose.Schema(
     },
     fileName: String,
     fileSize: Number,
+    // Add PDF-specific fields
+    fileMetadata: {
+      type: {
+        pageCount: Number,
+        publicId: String,
+        format: {
+          type: String,
+          enum: ["pdf", "jpg", "png", "gif"],
+        },
+        version: String,
+        resourceType: String,
+      },
+      // Only required for PDF documents
+      required: function () {
+        return this.messageType === "document";
+      },
+    },
     readBy: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -45,6 +62,9 @@ const messageSchema = new mongoose.Schema(
 
 // Indexes for better query performance
 messageSchema.index({ chatId: 1, createdAt: -1 });
+
+// Add index for file type queries
+messageSchema.index({ messageType: 1 });
 
 // After saving message, update latest message in chat
 messageSchema.post("save", async function () {

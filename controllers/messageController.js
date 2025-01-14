@@ -12,15 +12,26 @@ const upload = multer({
   limits: {
     fileSize: 1024 * 1024 * 5, // 5MB
   },
+  fileFilter: (req, file, cb) => {
+    // Accept only images and PDFs
+    if (
+      file.mimetype.startsWith("image/") ||
+      file.mimetype === "application/pdf"
+    ) {
+      cb(null, true);
+    } else {
+      cb(new AppError("Only images and PDFs are allowed!", 400), false);
+    }
+  },
 }).single("file");
 
-// Middleware to upload file
+// Middleware to handle file upload
 const handleFileUpload = (req, res, next) => {
   upload(req, res, function (err) {
     if (err instanceof multer.MulterError) {
-      return next(new AppError("File upload error", 400));
+      return next(new AppError(`File upload error: ${err.message}`, 400));
     } else if (err) {
-      return next(new AppError("Something went wrong", 500));
+      return next(new AppError(err.message || "Something went wrong", 500));
     }
     next();
   });
@@ -42,53 +53,79 @@ exports.sendMessage = [
       return next(new AppError("Chat not found or user not a member", 404));
     }
 
-    // Create message data object
+    // Early determination of message type and content
+    const hasFile = !!req.file;
+    const isPDF = hasFile && req.file.mimetype === "application/pdf";
+    const finalMessageType = hasFile ? (isPDF ? "document" : "image") : "text";
+
+    // Create initial message data
     const messageData = {
       sender: req.user._id,
       chatId,
-      messageType,
-      content: content || req.file?.originalname, // Use filename as content if no content provided
+      messageType: finalMessageType,
+      content: content || (hasFile ? req.file.originalname : ""),
     };
 
-    // 2) Handle file upload if file exists
-    if (req.file) {
+    // 2) Handle file upload if exists
+    if (hasFile) {
       try {
         const fileStr = `data:${
           req.file.mimetype
         };base64,${req.file.buffer.toString("base64")}`;
-        const result = await cloudinary.uploader.upload(fileStr, {
-          folder: "react-native-chat-app",
-          resource_type: "auto",
-        });
 
+        const uploadOptions = {
+          folder: "react-native-chat-app",
+          resource_type: isPDF ? "raw" : "image",
+          use_filename: true,
+          unique_filename: true,
+          overwrite: false,
+        };
+
+        // Single upload attempt
+        const result = await cloudinary.uploader.upload(fileStr, uploadOptions);
+
+        // Set file-related data
         messageData.fileUrl = result.secure_url;
         messageData.fileName = req.file.originalname;
         messageData.fileSize = result.bytes;
-        messageData.messageType = req.file.mimetype.startsWith("image/")
-          ? "image"
-          : "document";
+
+        if (isPDF) {
+          messageData.fileMetadata = {
+            format: "pdf",
+            resourceType: "raw",
+            publicId: result.public_id,
+            version: result.version,
+          };
+        }
       } catch (error) {
-        return next(new AppError("Error uploading to Cloudinary", 400));
+        console.error("Cloudinary upload error:", error);
+        return next(
+          new AppError("Error uploading file. Please try again.", 400)
+        );
       }
     }
 
-    // Validate content
+    // Validate message content
     if (!messageData.content) {
       return next(new AppError("Message must have content", 400));
     }
 
-    // 3) Create message
-    let message = await Message.create(messageData);
+    try {
+      // 3) Create single message
+      let message = await Message.create(messageData);
 
-    // 4) Populate sender details
-    message = await message.populate("sender", "username avatar");
+      // 4) Populate sender details
+      message = await message.populate("sender", "username avatar");
 
-    res.status(201).json({
-      status: "success",
-      data: {
-        message,
-      },
-    });
+      res.status(201).json({
+        status: "success",
+        data: { message },
+      });
+    } catch (error) {
+      // If message creation fails, log error
+      console.error("Message creation error:", error);
+      return next(new AppError("Error creating message", 400));
+    }
   }),
 ];
 
