@@ -1,4 +1,5 @@
 const Chat = require("../models/chatModel");
+const Message = require("../models/messageModel");
 const User = require("../models/userModel");
 const AppError = require("../utils/appError");
 const catchAsync = require("../utils/catchAsync");
@@ -194,6 +195,7 @@ exports.addToGroup = catchAsync(async (req, res, next) => {
 });
 
 exports.fetchUserChats = catchAsync(async (req, res, next) => {
+  // First get all chats
   const chats = await Chat.find({
     users: { $elemMatch: { $eq: req.user._id } },
     leftUsers: {
@@ -206,35 +208,37 @@ exports.fetchUserChats = catchAsync(async (req, res, next) => {
       path: "users",
       select: "username avatar isOnline lastSeen",
     })
-    .populate({
-      path: "latestMessage",
-      select: "content createdAt",
-      populate: {
-        path: "sender",
-        select: "username avatar",
-      },
-    })
-    .select("chatName isGroupChat users latestMessage")
+    .select("chatName isGroupChat users")
     .sort({ updatedAt: -1 });
 
-  const formattedChats = chats.map((chat) => {
+  // Get last messages for all chats
+  const chatPromises = chats.map(async (chat) => {
     const chatData = chat.toObject();
 
-    if (!chat.isGroupChat) {
-      // Get other user and remove current user from users array
-      const otherUser = chat.users.find(
-        (user) => user._id.toString() !== req.user._id.toString()
-      );
+    // Find last message for this chat
+    const lastMessage = await Message.findOne({ chatId: chat._id })
+      .sort({ createdAt: -1 })
+      .populate({
+        path: "sender",
+        select: "username avatar",
+      })
+      .select("content createdAt sender");
 
-      chatData.chatName = otherUser?.username;
-      // Remove users array with only other users
+    if (!chat.isGroupChat) {
       chatData.users = chat.users.filter(
         (user) => user._id.toString() !== req.user._id.toString()
       );
+      chatData.chatName = chatData.users[0]?.username;
+    }
+
+    if (lastMessage) {
+      chatData.latestMessage = lastMessage;
     }
 
     return chatData;
   });
+
+  const formattedChats = await Promise.all(chatPromises);
 
   res.status(200).json({
     status: "success",
