@@ -192,3 +192,55 @@ exports.addToGroup = catchAsync(async (req, res, next) => {
     data: { chat: updatedChat },
   });
 });
+
+exports.fetchUserChats = catchAsync(async (req, res, next) => {
+  const chats = await Chat.find({
+    users: { $elemMatch: { $eq: req.user._id } },
+    leftUsers: {
+      $not: {
+        $elemMatch: { user: req.user._id },
+      },
+    },
+  })
+    .populate({
+      path: "users",
+      select: "username avatar isOnline lastSeen",
+    })
+    .populate({
+      path: "latestMessage",
+      select: "content createdAt",
+      populate: {
+        path: "sender",
+        select: "username avatar",
+      },
+    })
+    .select("chatName isGroupChat users latestMessage")
+    .sort({ updatedAt: -1 });
+
+  const formattedChats = chats.map((chat) => {
+    const chatData = chat.toObject();
+
+    if (!chat.isGroupChat) {
+      // Get other user and remove current user from users array
+      const otherUser = chat.users.find(
+        (user) => user._id.toString() !== req.user._id.toString()
+      );
+
+      chatData.chatName = otherUser?.username;
+      // Remove users array with only other users
+      chatData.users = chat.users.filter(
+        (user) => user._id.toString() !== req.user._id.toString()
+      );
+    }
+
+    return chatData;
+  });
+
+  res.status(200).json({
+    status: "success",
+    results: formattedChats.length,
+    data: {
+      chats: formattedChats,
+    },
+  });
+});
