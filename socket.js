@@ -35,12 +35,8 @@ const initSocket = (server) => {
     socket.on("setup", async (userData) => {
       if (!userData._id) return;
 
-      // Log active users after new connection
       logActiveUsers();
-
-      // Store user data in socket instance
-      socket.userData = userData; // Add this line
-
+      socket.userData = userData;
       socket.join(userData._id);
       activeUsers.set(userData._id, socket.id);
 
@@ -86,9 +82,9 @@ const initSocket = (server) => {
       });
     });
 
-    // Handle new messages
-    socket.on("new message", async (newMessageData) => {
-      const chatId = newMessageData.chatId;
+    // Handle new messages - only emit to other users
+    socket.on("new message", async (messageData) => {
+      const chatId = messageData.chatId;
 
       try {
         const chat = await Chat.findById(chatId).populate("users");
@@ -97,36 +93,17 @@ const initSocket = (server) => {
           return;
         }
 
-        // Create message in database using sender from messageData
-        const message = await Message.create({
-          sender: newMessageData.sender, // Use sender from message data
-          content: newMessageData.content,
-          chatId: chatId,
-          messageType: newMessageData.messageType || "text",
-          fileUrl: newMessageData.fileUrl,
-          fileName: newMessageData.fileName,
-          fileSize: newMessageData.fileSize,
-        });
-
-        // Update chat's latest message
-        await Chat.findByIdAndUpdate(chatId, {
-          latestMessage: message._id,
-        });
-
         // Emit message to all users in chat except sender
         chat.users.forEach((user) => {
-          if (user._id.toString() === newMessageData.sender) return;
+          if (user._id.toString() === messageData.sender._id) return;
 
           const socketId = activeUsers.get(user._id.toString());
           if (socketId) {
-            io.to(socketId).emit("message received", {
-              ...message.toObject(),
-              chat: chatId,
-            });
+            io.to(socketId).emit("message received", messageData);
           }
         });
       } catch (error) {
-        console.error("Error handling new message:", error);
+        console.error("Error handling message broadcast:", error);
       }
     });
 
