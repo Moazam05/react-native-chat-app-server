@@ -31,11 +31,25 @@ const initSocket = (server) => {
   io.on("connection", (socket) => {
     console.log("Connected to socket.io".bold.bgRed);
 
+    // Check user status
+    socket.on("check user status", (userId) => {
+      try {
+        const isUserOnline = activeUsers.has(userId);
+        console.log(
+          `Status check for user ${userId}: ${
+            isUserOnline ? "online" : "offline"
+          }`
+        );
+        io.emit(isUserOnline ? "user online" : "user offline", userId);
+      } catch (error) {
+        console.error("Error checking user status:", error);
+      }
+    });
+
     // Handle user setup
     socket.on("setup", async (userData) => {
       if (!userData._id) return;
 
-      logActiveUsers();
       socket.userData = userData;
       socket.join(userData._id);
       activeUsers.set(userData._id, socket.id);
@@ -46,9 +60,11 @@ const initSocket = (server) => {
         lastSeen: new Date(),
       });
 
-      // Emit online status to other users
-      socket.broadcast.emit("user online", userData._id);
+      // Emit online status to all clients
+      io.emit("user online", userData._id);
       socket.emit("connected");
+
+      logActiveUsers();
     });
 
     // Handle joining a chat room
@@ -82,7 +98,7 @@ const initSocket = (server) => {
       });
     });
 
-    // Handle new messages - only emit to other users
+    // Handle new messages
     socket.on("new message", async (messageData) => {
       const chatId = messageData.chatId;
 
@@ -93,7 +109,6 @@ const initSocket = (server) => {
           return;
         }
 
-        // Emit message to all users in chat except sender
         chat.users.forEach((user) => {
           if (user._id.toString() === messageData.sender._id) return;
 
@@ -112,17 +127,15 @@ const initSocket = (server) => {
       console.log("User disconnected".bold.bgRed);
 
       if (socket.userData?._id) {
-        // Update user's online status and last seen
         await User.findByIdAndUpdate(socket.userData._id, {
           isOnline: false,
           lastSeen: new Date(),
         });
 
-        // Remove from active users
         activeUsers.delete(socket.userData._id);
+        io.emit("user offline", socket.userData._id);
 
-        // Emit offline status to other users
-        socket.broadcast.emit("user offline", socket.userData._id);
+        logActiveUsers();
       }
     });
   });
