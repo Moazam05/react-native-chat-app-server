@@ -47,22 +47,6 @@ exports.accessChat = catchAsync(async (req, res, next) => {
   }
 });
 
-exports.fetchChats = catchAsync(async (req, res, next) => {
-  const chats = await Chat.find({
-    users: { $elemMatch: { $eq: req.user._id } },
-  })
-    .populate("users", "-password")
-    .populate("groupAdmin", "-password")
-    .populate("latestMessage")
-    .sort({ updatedAt: -1 });
-
-  res.status(200).json({
-    status: "success",
-    results: chats.length,
-    data: { chats },
-  });
-});
-
 exports.createGroupChat = catchAsync(async (req, res, next) => {
   const { users, name } = req.body;
 
