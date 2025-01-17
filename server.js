@@ -32,7 +32,8 @@ const server = app.listen(port, () => {
 });
 
 // INITIALIZE SOCKET.IO
-initSocket(server);
+const io = initSocket(server);
+app.set("io", io);
 
 process.on("unhandledRejection", (err) => {
   console.log("UNHANDLED REJECTION! 💥 Shutting down...");
