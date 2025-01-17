@@ -47,11 +47,14 @@ exports.sendMessage = [
     const chat = await Chat.findOne({
       _id: chatId,
       users: { $elemMatch: { $eq: req.user._id } },
-    });
+    }).populate("users", "-password");
 
     if (!chat) {
       return next(new AppError("Chat not found or user not a member", 404));
     }
+
+    // Check if this is the first message in the chat
+    const isFirstMessage = (await Message.countDocuments({ chatId })) === 0;
 
     // Early determination of message type and content
     const hasFile = !!req.file;
@@ -116,6 +119,26 @@ exports.sendMessage = [
 
       // 4) Populate sender details
       message = await message.populate("sender", "username avatar");
+
+      // Update chat's latestMessage
+      await Chat.findByIdAndUpdate(chatId, { latestMessage: message._id });
+
+      // If this is the first message, emit new chat notification
+      if (isFirstMessage) {
+        const io = req.app.get("io");
+        // Get the updated chat with latestMessage
+        const updatedChat = await Chat.findById(chatId)
+          .populate("users", "-password")
+          .populate({
+            path: "latestMessage",
+            populate: {
+              path: "sender",
+              select: "username avatar",
+            },
+          });
+
+        io.emit("new chat notification", updatedChat);
+      }
 
       res.status(201).json({
         status: "success",
