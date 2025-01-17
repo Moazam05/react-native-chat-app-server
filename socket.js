@@ -70,17 +70,80 @@ const initSocket = (server) => {
     // Handle joining a chat room
     socket.on("join chat", async (roomId) => {
       socket.join(roomId);
-      console.log("User Joined Room:", roomId.bgRed);
+      console.log("User Joined Room:", roomId);
 
-      // Mark previous messages as read
-      await Message.updateMany(
-        {
+      try {
+        // Get unread messages before marking as read
+        const unreadCount = await Message.countDocuments({
           chatId: roomId,
           sender: { $ne: socket.userData?._id },
           readBy: { $ne: socket.userData?._id },
-        },
-        { $push: { readBy: socket.userData?._id } }
-      );
+        });
+
+        // Mark messages as read
+        if (unreadCount > 0) {
+          await Message.updateMany(
+            {
+              chatId: roomId,
+              sender: { $ne: socket.userData?._id },
+              readBy: { $ne: socket.userData?._id },
+            },
+            { $addToSet: { readBy: socket.userData?._id } }
+          );
+
+          // Notify about read status
+          io.to(roomId).emit("messages read", {
+            chatId: roomId,
+            userId: socket.userData?._id,
+          });
+
+          // Update chat list for the user
+          const lastMessage = await Message.findOne({ chatId: roomId })
+            .sort({ createdAt: -1 })
+            .populate("sender", "username avatar");
+
+          socket.emit("chat list update", {
+            chatId: roomId,
+            unreadCount: 0,
+            lastMessage,
+          });
+        }
+      } catch (error) {
+        console.error("Error handling join chat:", error);
+      }
+    });
+
+    socket.on("update chat list", async () => {
+      try {
+        if (!socket.userData?._id) return;
+
+        // Get fresh unread counts for all chats
+        const chats = await Chat.find({
+          users: socket.userData._id,
+        }).populate({
+          path: "latestMessage",
+          populate: {
+            path: "sender",
+            select: "username avatar",
+          },
+        });
+
+        for (const chat of chats) {
+          const unreadCount = await Message.countDocuments({
+            chatId: chat._id,
+            sender: { $ne: socket.userData._id },
+            readBy: { $size: 0 },
+          });
+
+          socket.emit("chat list update", {
+            chatId: chat._id,
+            lastMessage: chat.latestMessage,
+            unreadCount: unreadCount,
+          });
+        }
+      } catch (error) {
+        console.error("Error updating chat list:", error);
+      }
     });
 
     // Handle typing events
@@ -104,29 +167,71 @@ const initSocket = (server) => {
 
       try {
         const chat = await Chat.findById(chatId).populate("users");
-        if (!chat || !chat.users) {
-          console.log("Chat not found or users not defined".red);
-          return;
-        }
+        if (!chat) return;
 
-        chat.users.forEach((user) => {
+        // For each user in the chat
+        chat.users.forEach(async (user) => {
           if (user._id.toString() === messageData.sender._id) return;
 
           const socketId = activeUsers.get(user._id.toString());
-          if (socketId) {
-            // Send message received event
-            io.to(socketId).emit("message received", messageData);
 
-            // Send a separate event for chat list updates
+          // Get current unread count for this user
+          const unreadCount = await Message.countDocuments({
+            chatId,
+            sender: { $ne: user._id },
+            readBy: { $ne: user._id },
+          });
+
+          if (socketId) {
+            // User is online - send real-time update
+            io.to(socketId).emit("message received", messageData);
             io.to(socketId).emit("chat list update", {
               chatId: messageData.chatId,
               lastMessage: messageData,
-              unreadCount: 1, // Increment unread count
+              unreadCount,
             });
           }
         });
       } catch (error) {
-        console.error("Error handling message broadcast:", error);
+        console.error("Error handling new message:", error);
+      }
+    });
+
+    // Handle read messages
+    socket.on("get chat updates", async () => {
+      try {
+        if (!socket.userData?._id) return;
+
+        // Get all chats for this user with unread counts
+        const chats = await Chat.find({
+          users: socket.userData._id,
+        }).populate({
+          path: "latestMessage",
+          populate: {
+            path: "sender",
+            select: "username avatar",
+          },
+        });
+
+        // For each chat, count unread messages
+        for (const chat of chats) {
+          const unreadCount = await Message.countDocuments({
+            chatId: chat._id,
+            sender: { $ne: socket.userData._id },
+            readBy: { $size: 0 },
+          });
+
+          if (chat.latestMessage) {
+            // Emit update for each chat
+            socket.emit("chat list update", {
+              chatId: chat._id,
+              lastMessage: chat.latestMessage,
+              unreadCount: unreadCount,
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error getting chat updates:", error);
       }
     });
 
