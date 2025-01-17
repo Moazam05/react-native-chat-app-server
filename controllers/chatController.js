@@ -179,7 +179,6 @@ exports.addToGroup = catchAsync(async (req, res, next) => {
 });
 
 exports.fetchUserChats = catchAsync(async (req, res, next) => {
-  // First get all chats
   const chats = await Chat.find({
     users: { $elemMatch: { $eq: req.user._id } },
     leftUsers: {
@@ -192,21 +191,33 @@ exports.fetchUserChats = catchAsync(async (req, res, next) => {
       path: "users",
       select: "username avatar isOnline lastSeen",
     })
-    .select("chatName isGroupChat users")
+    .select("chatName isGroupChat users latestMessage")
     .sort({ updatedAt: -1 });
 
-  // Get last messages for all chats
   const chatPromises = chats.map(async (chat) => {
     const chatData = chat.toObject();
 
-    // Find last message for this chat
-    const lastMessage = await Message.findOne({ chatId: chat._id })
-      .sort({ createdAt: -1 })
-      .populate({
-        path: "sender",
-        select: "username avatar",
-      })
-      .select("content createdAt sender");
+    // Get messages and count empty readBy arrays
+    const [messages, lastMessage] = await Promise.all([
+      // Get all messages for this chat
+      Message.find({
+        chatId: chat._id,
+      }).select("readBy"),
+
+      // Get latest message
+      Message.findOne({ chatId: chat._id })
+        .sort({ createdAt: -1 })
+        .populate({
+          path: "sender",
+          select: "username avatar",
+        })
+        .select("content createdAt sender readBy"),
+    ]);
+
+    // Count messages with empty readBy array
+    const unreadCount = messages.filter(
+      (msg) => msg.readBy.length === 0
+    ).length;
 
     if (!chat.isGroupChat) {
       chatData.users = chat.users.filter(
@@ -218,6 +229,12 @@ exports.fetchUserChats = catchAsync(async (req, res, next) => {
     if (lastMessage) {
       chatData.latestMessage = lastMessage;
     }
+
+    chatData.unreadCount = unreadCount;
+
+    console.log(`Chat ${chat._id}:`);
+    console.log("Total messages:", messages.length);
+    console.log("Messages with empty readBy:", unreadCount);
 
     return chatData;
   });

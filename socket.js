@@ -114,12 +114,26 @@ const initSocket = (server) => {
 
           const socketId = activeUsers.get(user._id.toString());
           if (socketId) {
+            // Send message received event
             io.to(socketId).emit("message received", messageData);
+
+            // Send a separate event for chat list updates
+            io.to(socketId).emit("chat list update", {
+              chatId: messageData.chatId,
+              lastMessage: messageData,
+              unreadCount: 1, // Increment unread count
+            });
           }
         });
       } catch (error) {
         console.error("Error handling message broadcast:", error);
       }
+    });
+
+    // App background
+    socket.on("app background", () => {
+      // Don't mark user as offline, just note that app is in background
+      console.log("User app in background:", socket.userData?._id);
     });
 
     // Handle disconnect
