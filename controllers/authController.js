@@ -45,14 +45,27 @@ exports.login = catchAsync(async (req, res, next) => {
   }
 
   // 2) Check if user exists && password is exist
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email }).select("+password");
   if (!user) {
     return next(new AppError("User not found", 404));
   }
+
   // 3) Check if password is correct
   const correct = await user.correctPassword(password, user.password);
   if (!correct) {
     return next(new AppError("Incorrect password", 401));
+  }
+
+  // Update user's online status
+  await User.findByIdAndUpdate(user._id, {
+    isOnline: true,
+    lastSeen: new Date(),
+  });
+
+  // Emit socket event for user online status
+  const io = req.app.get("io");
+  if (io) {
+    io.emit("user online", user._id);
   }
 
   // 4) If everything ok, send token to client

@@ -50,6 +50,16 @@ const initSocket = (server) => {
     socket.on("setup", async (userData) => {
       if (!userData._id) return;
 
+      // Remove any existing connections for this user
+      const existingSocketId = activeUsers.get(userData._id);
+      if (existingSocketId) {
+        const existingSocket = io.sockets.sockets.get(existingSocketId);
+        if (existingSocket) {
+          existingSocket.disconnect(true);
+        }
+        activeUsers.delete(userData._id);
+      }
+
       socket.userData = userData;
       socket.join(userData._id);
       activeUsers.set(userData._id, socket.id);
@@ -62,6 +72,11 @@ const initSocket = (server) => {
 
       // Emit online status to all clients
       io.emit("user online", userData._id);
+
+      // Send current online users list to the connecting client
+      const onlineUsers = Array.from(activeUsers.keys());
+      socket.emit("online users", onlineUsers);
+
       socket.emit("connected");
 
       logActiveUsers();
