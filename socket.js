@@ -28,6 +28,61 @@ const initSocket = (server) => {
     console.log("Total active users:", activeUsers.size.toString().bold.blue);
   };
 
+  // Helper function for auto-read messages
+  const autoReadMessages = async (roomId, chat, socket) => {
+    try {
+      // Get all users currently in the room
+      const roomSockets = await io.in(roomId).fetchSockets();
+      const joinedUserIds = roomSockets
+        .map((s) => s.userData?._id?.toString())
+        .filter(Boolean);
+
+      console.log(`Room ${roomId} - Active users:`, joinedUserIds);
+
+      if (!chat.isGroupChat) {
+        // For direct messages, mark as read if both users are present
+        if (joinedUserIds.length === 2) {
+          console.log(
+            `Direct chat ${roomId} - Both users present, marking messages as read`
+          );
+          await Message.updateMany(
+            {
+              chatId: roomId,
+              readBy: { $nin: joinedUserIds },
+            },
+            {
+              $addToSet: { readBy: { $each: joinedUserIds } },
+            }
+          );
+        }
+      } else {
+        // For group chats, mark as read for all present users
+        if (joinedUserIds.length > 0) {
+          console.log(
+            `Group chat ${roomId} - Marking messages as read for ${joinedUserIds.length} users`
+          );
+          await Message.updateMany(
+            {
+              chatId: roomId,
+              readBy: { $nin: joinedUserIds },
+            },
+            {
+              $addToSet: { readBy: { $each: joinedUserIds } },
+            }
+          );
+        }
+      }
+
+      // Notify about read status
+      io.to(roomId).emit("messages read", {
+        chatId: roomId,
+        userId: socket.userData?._id,
+      });
+    } catch (error) {
+      console.error("Error in autoReadMessages:", error);
+    }
+  };
+
   io.on("connection", (socket) => {
     console.log("Connected to socket.io".bold.bgRed);
 
@@ -84,10 +139,15 @@ const initSocket = (server) => {
 
     // Handle joining a chat room
     socket.on("join chat", async (roomId) => {
+      if (!socket.userData?._id) return;
       socket.join(roomId);
       console.log("User Joined Room:", roomId);
 
       try {
+        // Get chat details
+        const chat = await Chat.findById(roomId);
+        if (!chat) return;
+
         // Get unread messages before marking as read
         const unreadCount = await Message.countDocuments({
           chatId: roomId,
@@ -95,39 +155,25 @@ const initSocket = (server) => {
           readBy: { $ne: socket.userData?._id },
         });
 
-        // Mark messages as read
-        if (unreadCount > 0) {
-          await Message.updateMany(
-            {
-              chatId: roomId,
-              sender: { $ne: socket.userData?._id },
-              readBy: { $ne: socket.userData?._id },
-            },
-            { $addToSet: { readBy: socket.userData?._id } }
-          );
+        // Handle auto-read based on room presence
+        await autoReadMessages(roomId, chat, socket);
 
-          // Notify about read status
-          io.to(roomId).emit("messages read", {
-            chatId: roomId,
-            userId: socket.userData?._id,
-          });
+        // Update chat list for the user
+        const lastMessage = await Message.findOne({ chatId: roomId })
+          .sort({ createdAt: -1 })
+          .populate("sender", "username avatar");
 
-          // Update chat list for the user
-          const lastMessage = await Message.findOne({ chatId: roomId })
-            .sort({ createdAt: -1 })
-            .populate("sender", "username avatar");
-
-          socket.emit("chat list update", {
-            chatId: roomId,
-            unreadCount: 0,
-            lastMessage,
-          });
-        }
+        socket.emit("chat list update", {
+          chatId: roomId,
+          unreadCount: 0,
+          lastMessage,
+        });
       } catch (error) {
         console.error("Error handling join chat:", error);
       }
     });
 
+    // Rest of your original code remains exactly the same...
     socket.on("update chat list", async () => {
       try {
         if (!socket.userData?._id) return;
@@ -207,12 +253,15 @@ const initSocket = (server) => {
             });
           }
         });
+
+        // Auto-read for users in the room
+        await autoReadMessages(chatId, chat, socket);
       } catch (error) {
         console.error("Error handling new message:", error);
       }
     });
 
-    // Handle read messages
+    // Handle get chat updates
     socket.on("get chat updates", async () => {
       try {
         if (!socket.userData?._id) return;
@@ -250,9 +299,15 @@ const initSocket = (server) => {
       }
     });
 
+    // Handle leaving a chat room
+    socket.on("leave chat", (roomId) => {
+      if (!socket.userData?._id) return;
+      socket.leave(roomId);
+      console.log("User Left Room:", roomId);
+    });
+
     // App background
     socket.on("app background", () => {
-      // Don't mark user as offline, just note that app is in background
       console.log("User app in background:", socket.userData?._id);
     });
 
