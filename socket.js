@@ -37,13 +37,15 @@ const initSocket = (server) => {
         .map((s) => s.userData?._id?.toString())
         .filter(Boolean);
 
-      console.log(`Room ${roomId} - Active users:`, joinedUserIds);
+      console.log(`Room ${roomId}`.bgMagenta);
+      console.log(`- Active users:`, joinedUserIds);
 
       if (!chat.isGroupChat) {
         // For direct messages, mark as read if both users are present
         if (joinedUserIds.length === 2) {
           console.log(
             `Direct chat ${roomId} - Both users present, marking messages as read`
+              .bold.yellow
           );
           await Message.updateMany(
             {
