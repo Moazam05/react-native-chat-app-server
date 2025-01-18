@@ -141,7 +141,7 @@ const initSocket = (server) => {
     socket.on("join chat", async (roomId) => {
       if (!socket.userData?._id) return;
       socket.join(roomId);
-      console.log("User Joined Room:", roomId);
+      console.log("User Joined Room:".bgMagenta, roomId);
 
       try {
         // Get chat details
@@ -303,7 +303,7 @@ const initSocket = (server) => {
     socket.on("leave chat", (roomId) => {
       if (!socket.userData?._id) return;
       socket.leave(roomId);
-      console.log("User Left Room:", roomId);
+      console.log("User Left Room:".bold.bgRed, roomId);
     });
 
     // App background
