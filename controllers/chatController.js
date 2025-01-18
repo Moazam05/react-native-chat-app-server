@@ -232,10 +232,6 @@ exports.fetchUserChats = catchAsync(async (req, res, next) => {
 
     chatData.unreadCount = unreadCount;
 
-    console.log(`Chat ${chat._id}:`);
-    console.log("Total messages:", messages.length);
-    console.log("Messages with empty readBy:", unreadCount);
-
     return chatData;
   });
 
