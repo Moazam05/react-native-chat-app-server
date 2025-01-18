@@ -245,3 +245,20 @@ exports.fetchUserChats = catchAsync(async (req, res, next) => {
     },
   });
 });
+
+exports.getGroupInfo = catchAsync(async (req, res, next) => {
+  const { chatId } = req.params;
+
+  const chat = await Chat.findById(chatId)
+    .populate("users", "-password")
+    .populate("groupAdmin", "-password");
+
+  if (!chat) {
+    return next(new AppError("Chat not found", 404));
+  }
+
+  res.status(200).json({
+    status: "success",
+    data: { chat },
+  });
+});
