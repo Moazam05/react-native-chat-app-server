@@ -78,17 +78,24 @@ exports.sendMessage = [
 
         const uploadOptions = {
           folder: "react-native-chat-app",
-          resource_type: isPDF ? "raw" : "image",
+          resource_type: "auto",
+          format: isPDF ? "pdf" : undefined,
           use_filename: true,
           unique_filename: true,
           overwrite: false,
         };
 
-        // Single upload attempt
+        if (isPDF) {
+          uploadOptions.flags = "attachment";
+          uploadOptions.type = "private";
+        }
+
         const result = await cloudinary.uploader.upload(fileStr, uploadOptions);
 
         // Set file-related data
-        messageData.fileUrl = result.secure_url;
+        messageData.fileUrl = isPDF
+          ? result.secure_url + "?dl=1"
+          : result.secure_url; // Add download flag for PDFs
         messageData.fileName = req.file.originalname;
         messageData.fileSize = result.bytes;
 
@@ -97,7 +104,8 @@ exports.sendMessage = [
             format: "pdf",
             resourceType: "raw",
             publicId: result.public_id,
-            version: result.version,
+            version: result.version.toString(), // Ensure version is string
+            url: result.secure_url, // Store original URL too
           };
         }
       } catch (error) {
