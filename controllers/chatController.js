@@ -211,7 +211,7 @@ exports.fetchUserChats = catchAsync(async (req, res, next) => {
           path: "sender",
           select: "username avatar",
         })
-        .select("content createdAt sender readBy"),
+        .select("content createdAt sender readBy messageType"),
     ]);
 
     // Count messages with empty readBy array
