@@ -1,5 +1,18 @@
-node_modules
+echo "# Dependencies
+node_modules/
 
+# Build
 /dist
 
+# Environment variables
 .env
+
+# Firebase credentials
+serviceAccountKey.json
+
+# Misc
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*" > .gitignore
