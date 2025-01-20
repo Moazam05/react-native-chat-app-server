@@ -16,7 +16,7 @@ A real-time chat application server built with Node.js, Express, MongoDB, and So
 1. Clone the repository:
 ```bash
 git clone https://github.com/Moazam05/react-native-chat-app-server.git
-cd chatappserver
+cd react-native-chat-app-server
 ```
 
 2. Install dependencies:
