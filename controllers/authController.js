@@ -37,38 +37,41 @@ exports.signup = catchAsync(async (req, res, next) => {
 });
 
 exports.login = catchAsync(async (req, res, next) => {
-  const { email, password } = req.body;
+  const { email, password, fcmToken } = req.body;
 
-  // 1) Check if email and password exist
   if (!email || !password) {
     return next(new AppError("Please provide email and password", 400));
   }
 
-  // 2) Check if user exists && password is exist
   const user = await User.findOne({ email }).select("+password");
   if (!user) {
     return next(new AppError("User not found", 404));
   }
 
-  // 3) Check if password is correct
   const correct = await user.correctPassword(password, user.password);
   if (!correct) {
     return next(new AppError("Incorrect password", 401));
   }
 
-  // Update user's online status
-  await User.findByIdAndUpdate(user._id, {
+  // Combine all updates into a single operation
+  const updateFields = {
     isOnline: true,
     lastSeen: new Date(),
-  });
+  };
 
-  // Emit socket event for user online status
+  if (fcmToken) {
+    updateFields.fcmToken = fcmToken;
+  }
+
+  // Single database update
+  await User.findByIdAndUpdate(user._id, updateFields);
+
+  // Socket emission
   const io = req.app.get("io");
   if (io) {
     io.emit("user online", user._id);
   }
 
-  // 4) If everything ok, send token to client
   createSendToken(user, 200, res);
 });
 

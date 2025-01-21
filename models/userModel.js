@@ -27,6 +27,9 @@ const userSchema = new mongoose.Schema(
       default:
         "https://icon-library.com/images/anonymous-avatar-icon/anonymous-avatar-icon-25.jpg",
     },
+    fcmToken: {
+      type: String,
+    },
     isOnline: {
       type: Boolean,
       default: false,
@@ -67,6 +70,11 @@ userSchema.statics.findByEmail = function (email) {
 // Update last seen
 userSchema.methods.updateLastSeen = function () {
   this.lastSeen = Date.now();
+  return this.save();
+};
+
+userSchema.methods.updateFCMToken = function (fcmToken) {
+  this.fcmToken = fcmToken;
   return this.save();
 };
 
