@@ -12,6 +12,7 @@ const globalErrorHandler = require("./controllers/errorController");
 const userRouter = require("./routes/userRoutes");
 const chatRouter = require("./routes/chatRoutes");
 const messageRouter = require("./routes/messageRoutes");
+const notificationRouter = require("./routes/notificationRoutes");
 
 // Ensure logs directory exists
 const logsDir = path.join(__dirname, "logs");
@@ -116,6 +117,7 @@ app.use((req, res, next) => {
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/chats", chatRouter);
 app.use("/api/v1/messages", messageRouter);
+app.use("/api/v1/notifications", notificationRouter);
 
 // Health Check
 app.get("/", (req, res) => {
