@@ -25,6 +25,7 @@ const accessLogStream = fs.createWriteStream(path.join(logsDir, "access.log"), {
   flags: "a",
 });
 
+// CORS setup
 const corsOptions = {
   origin: "*",
   methods: "*",
@@ -32,86 +33,67 @@ const corsOptions = {
 };
 
 const app = express();
+
+// Static files and CORS
 app.use(express.static(path.join(__dirname, "public")));
 app.use(cors(corsOptions));
 
-// Enhanced logging setup
-if (process.env.NODE_ENV === "development") {
-  app.use(morgan("dev"));
-} else {
-  // Production logging
-  app.use(morgan("combined", { stream: accessLogStream }));
+// Custom Morgan tokens
+morgan.token("status-emoji", (req, res) => {
+  return res.statusCode < 400 ? "✅" : "❌";
+});
 
-  // Console logging with timestamp
-  app.use(
-    morgan((tokens, req, res) => {
-      return [
-        "🌐",
-        new Date().toISOString(),
-        tokens.method(req, res),
-        tokens.url(req, res),
-        tokens.status(req, res),
-        tokens["response-time"](req, res),
-        "ms",
-      ].join(" ");
-    })
-  );
-}
+morgan.token("custom-timestamp", () => {
+  return new Date().toISOString();
+});
 
-app.use(express.json({ limit: "1mb" }));
+morgan.token("short-agent", (req) => {
+  return req.get("user-agent")?.split(" ")[0] || "Unknown Agent";
+});
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-
-  // Add timestamp to request
-  req.requestTime = new Date().toISOString();
-
-  // Log request details
+// Custom Morgan format
+const customFormat = (tokens, req, res) => {
+  // Save log message for production file logging
   if (process.env.NODE_ENV === "production") {
-    const requestLog = {
-      timestamp: req.requestTime,
-      method: req.method,
-      url: req.originalUrl,
-      body: req.method !== "GET" ? req.body : undefined,
-      headers: req.headers,
-      ip: req.ip,
+    const logMessage = {
+      timestamp: tokens["custom-timestamp"](req, res),
+      method: tokens.method(req, res),
+      url: tokens.url(req, res),
+      status: tokens.status(req, res),
+      duration: `${tokens["response-time"](req, res)}ms`,
+      userAgent: tokens["short-agent"](req, res),
     };
 
-    // Log to file
     fs.appendFileSync(
-      path.join(logsDir, "requests.log"),
-      JSON.stringify(requestLog) + "\n"
+      path.join(logsDir, "responses.log"),
+      JSON.stringify(logMessage) + "\n"
     );
   }
 
-  // Log response
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    const logMessage = {
-      timestamp: new Date().toISOString(),
-      method: req.method,
-      url: req.originalUrl,
-      status: res.statusCode,
-      duration: `${duration}ms`,
-      userAgent: req.get("user-agent"),
-    };
+  return [
+    `${tokens["status-emoji"](req, res)} ${tokens["custom-timestamp"](
+      req,
+      res
+    )}`,
+    `🛣️  ${tokens.method(req, res)} ${tokens.url(req, res)} (${tokens.status(
+      req,
+      res
+    )})`,
+    `⏱️  ${tokens["response-time"](req, res)}ms | ${tokens["short-agent"](
+      req,
+      res
+    )}\n`,
+  ].join("\n");
+};
 
-    if (process.env.NODE_ENV === "production") {
-      // Log to file
-      fs.appendFileSync(
-        path.join(logsDir, "responses.log"),
-        JSON.stringify(logMessage) + "\n"
-      );
-    }
+// Logging setup
+if (process.env.NODE_ENV === "production") {
+  app.use(morgan("combined", { stream: accessLogStream })); // File logging
+}
+app.use(morgan(customFormat)); // Console logging with custom format
 
-    // Console log with emoji based on status code
-    const emoji = res.statusCode < 400 ? "✅" : "❌";
-    console.log(`${emoji} ${JSON.stringify(logMessage)}`);
-  });
-
-  next();
-});
+// Body parser
+app.use(express.json({ limit: "1mb" }));
 
 // API Routes
 app.use("/api/v1/users", userRouter);
@@ -126,7 +108,6 @@ app.get("/", (req, res) => {
     message: "Chat Socket io App API is running...",
     timestamp: new Date().toISOString(),
   };
-
   res.send(healthCheck);
 });
 
@@ -138,42 +119,33 @@ app.all("*", (req, res, next) => {
 // Global Error Handler
 app.use(globalErrorHandler);
 
-// Uncaught Exception Handler
-process.on("uncaughtException", (error) => {
+// Error logging for uncaught exceptions and unhandled rejections
+const logError = (type, error) => {
   const errorLog = {
     timestamp: new Date().toISOString(),
-    type: "UncaughtException",
+    type,
     error: error.message,
     stack: error.stack,
   };
 
-  console.error("💥 UNCAUGHT EXCEPTION:", error);
+  console.error(`💥 ${type}:`, error);
 
   if (process.env.NODE_ENV === "production") {
     fs.appendFileSync(
-      path.join(logsDir, "uncaught-exceptions.log"),
+      path.join(logsDir, `${type.toLowerCase()}.log`),
       JSON.stringify(errorLog) + "\n"
     );
   }
+};
+
+// Uncaught Exception Handler
+process.on("uncaughtException", (error) => {
+  logError("UncaughtException", error);
 });
 
 // Unhandled Rejection Handler
 process.on("unhandledRejection", (error) => {
-  const errorLog = {
-    timestamp: new Date().toISOString(),
-    type: "UnhandledRejection",
-    error: error.message,
-    stack: error.stack,
-  };
-
-  console.error("💥 UNHANDLED REJECTION:", error);
-
-  if (process.env.NODE_ENV === "production") {
-    fs.appendFileSync(
-      path.join(logsDir, "unhandled-rejections.log"),
-      JSON.stringify(errorLog) + "\n"
-    );
-  }
+  logError("UnhandledRejection", error);
 });
 
 module.exports = app;
