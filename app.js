@@ -13,6 +13,7 @@ const userRouter = require("./routes/userRoutes");
 const chatRouter = require("./routes/chatRoutes");
 const messageRouter = require("./routes/messageRoutes");
 const notificationRouter = require("./routes/notificationRoutes");
+const { formatTimestamp } = require("./utils");
 
 // Ensure logs directory exists
 const logsDir = path.join(__dirname, "logs");
@@ -44,7 +45,7 @@ morgan.token("status-emoji", (req, res) => {
 });
 
 morgan.token("custom-timestamp", () => {
-  return new Date().toISOString();
+  return formatTimestamp(new Date());
 });
 
 morgan.token("short-agent", (req) => {
