@@ -28,63 +28,6 @@ const initSocket = (server) => {
     console.log("Total active users:", activeUsers.size.toString().bold.blue);
   };
 
-  // Helper function for auto-read messages
-  const autoReadMessages = async (roomId, chat, socket) => {
-    try {
-      // Get all users currently in the room
-      const roomSockets = await io.in(roomId).fetchSockets();
-      const joinedUserIds = roomSockets
-        .map((s) => s.userData?._id?.toString())
-        .filter(Boolean);
-
-      console.log(`Room ${roomId}`.bgMagenta);
-      console.log(`- Active users:`, joinedUserIds);
-
-      if (!chat.isGroupChat) {
-        // For direct messages, mark as read if both users are present
-        if (joinedUserIds.length === 2) {
-          console.log(
-            `Direct chat ${roomId} - Both users present, marking messages as read`
-              .bold.yellow
-          );
-          await Message.updateMany(
-            {
-              chatId: roomId,
-              readBy: { $nin: joinedUserIds },
-            },
-            {
-              $addToSet: { readBy: { $each: joinedUserIds } },
-            }
-          );
-        }
-      } else {
-        // For group chats, mark as read for all present users
-        if (joinedUserIds.length > 0) {
-          console.log(
-            `Group chat ${roomId} - Marking messages as read for ${joinedUserIds.length} users`
-          );
-          await Message.updateMany(
-            {
-              chatId: roomId,
-              readBy: { $nin: joinedUserIds },
-            },
-            {
-              $addToSet: { readBy: { $each: joinedUserIds } },
-            }
-          );
-        }
-      }
-
-      // Notify about read status
-      io.to(roomId).emit("messages read", {
-        chatId: roomId,
-        userId: socket.userData?._id,
-      });
-    } catch (error) {
-      console.error("Error in autoReadMessages:", error);
-    }
-  };
-
   io.on("connection", (socket) => {
     console.log("Connected to socket.io".bold.bgRed);
 
@@ -142,6 +85,7 @@ const initSocket = (server) => {
     // Handle joining a chat room
     socket.on("join chat", async (roomId) => {
       if (!socket.userData?._id) return;
+
       socket.join(roomId);
       console.log("User Joined Room:".bgMagenta, roomId);
 
@@ -150,37 +94,51 @@ const initSocket = (server) => {
         const chat = await Chat.findById(roomId);
         if (!chat) return;
 
-        // Get unread messages before marking as read
+        // Mark all unread messages as read for THIS user only
+        await Message.updateMany(
+          {
+            chatId: roomId,
+            readBy: { $ne: socket.userData._id },
+          },
+          {
+            $addToSet: { readBy: socket.userData._id },
+          }
+        );
+
+        // Get the updated unread count (should be 0 for this user now)
         const unreadCount = await Message.countDocuments({
           chatId: roomId,
-          sender: { $ne: socket.userData?._id },
-          readBy: { $ne: socket.userData?._id },
+          readBy: { $ne: socket.userData._id },
         });
 
-        // Handle auto-read based on room presence
-        await autoReadMessages(roomId, chat, socket);
-
-        // Update chat list for the user
+        // Get last message for the chat list
         const lastMessage = await Message.findOne({ chatId: roomId })
           .sort({ createdAt: -1 })
           .populate("sender", "username avatar");
 
+        // Update chat list for the joining user
         socket.emit("chat list update", {
           chatId: roomId,
-          unreadCount: 0,
+          unreadCount: 0, // Since they just joined, their unread count is 0
           lastMessage,
+        });
+
+        // Notify other users in the room about messages being read
+        io.to(roomId).emit("messages read", {
+          chatId: roomId,
+          userId: socket.userData._id,
         });
       } catch (error) {
         console.error("Error handling join chat:", error);
       }
     });
 
-    // Rest of your original code remains exactly the same...
+    // Handle chat list updates
     socket.on("update chat list", async () => {
       try {
         if (!socket.userData?._id) return;
 
-        // Get fresh unread counts for all chats
+        // Get fresh chat list
         const chats = await Chat.find({
           users: socket.userData._id,
         }).populate({
@@ -191,17 +149,19 @@ const initSocket = (server) => {
           },
         });
 
+        // Process each chat
         for (const chat of chats) {
+          // Calculate unread count for current user
           const unreadCount = await Message.countDocuments({
             chatId: chat._id,
-            sender: { $ne: socket.userData._id },
-            readBy: { $size: 0 },
+            readBy: { $ne: socket.userData._id },
           });
 
+          // Emit update with correct unread count
           socket.emit("chat list update", {
             chatId: chat._id,
             lastMessage: chat.latestMessage,
-            unreadCount: unreadCount,
+            unreadCount,
           });
         }
       } catch (error) {
@@ -241,7 +201,6 @@ const initSocket = (server) => {
           // Get current unread count for this user
           const unreadCount = await Message.countDocuments({
             chatId,
-            sender: { $ne: user._id },
             readBy: { $ne: user._id },
           });
 
@@ -255,9 +214,6 @@ const initSocket = (server) => {
             });
           }
         });
-
-        // Auto-read for users in the room
-        await autoReadMessages(chatId, chat, socket);
       } catch (error) {
         console.error("Error handling new message:", error);
       }
@@ -283,8 +239,7 @@ const initSocket = (server) => {
         for (const chat of chats) {
           const unreadCount = await Message.countDocuments({
             chatId: chat._id,
-            sender: { $ne: socket.userData._id },
-            readBy: { $size: 0 },
+            readBy: { $ne: socket.userData._id },
           });
 
           if (chat.latestMessage) {
