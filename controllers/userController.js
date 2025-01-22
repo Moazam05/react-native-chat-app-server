@@ -107,3 +107,17 @@ exports.getAllUsers = catchAsync(async (req, res, next) => {
     users,
   });
 });
+
+exports.updateFcmToken = catchAsync(async (req, res, next) => {
+  const { fcmToken } = req.body;
+  if (!fcmToken) {
+    return next(new AppError("FCM token is required", 400));
+  }
+
+  await User.findByIdAndUpdate(req.user._id, { fcmToken });
+
+  res.status(200).json({
+    status: "success",
+    message: "FCM token updated successfully",
+  });
+});

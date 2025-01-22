@@ -16,5 +16,6 @@ router.use(authController.protect);
 // USER ROUTES
 router.put("/updateMe", userController.updateMe);
 router.get("/", userController.getAllUsers);
+router.patch("/update-fcm-token", userController.updateFcmToken);
 
 module.exports = router;
