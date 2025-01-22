@@ -1,12 +1,6 @@
-const admin = require("firebase-admin");
-
 const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/appError");
-const serviceAccount = require("../serviceAccountKey.json");
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+const admin = require("../config/firebase");
 
 exports.createNotification = catchAsync(async (req, res, next) => {
   const { token, title, body, data } = req.body;

@@ -4,16 +4,14 @@ const Chat = require("../models/chatModel");
 const AppError = require("../utils/appError");
 const catchAsync = require("../utils/catchAsync");
 const cloudinary = require("../cloudinary");
+const admin = require("../config/firebase");
 
 // Configure multer storage
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: {
-    fileSize: 1024 * 1024 * 5, // 5MB
-  },
+  limits: { fileSize: 1024 * 1024 * 5 }, // 5MB
   fileFilter: (req, file, cb) => {
-    // Accept only images and PDFs
     if (
       file.mimetype.startsWith("image/") ||
       file.mimetype === "application/pdf"
@@ -37,13 +35,53 @@ const handleFileUpload = (req, res, next) => {
   });
 };
 
+// todo: Firebase Cloud Notification
+const sendNotification = async (receiver, messageData, chat, sender) => {
+  try {
+    if (!receiver.fcmToken) return;
+
+    const message = {
+      token: receiver.fcmToken,
+      notification: {
+        title: chat.isGroupChat ? chat.chatName : sender.username,
+        body:
+          messageData.messageType === "text"
+            ? messageData.content
+            : `Sent ${messageData.messageType}`,
+      },
+      data: {
+        chatData: JSON.stringify({
+          chatId: chat._id.toString(),
+          userId: sender._id.toString(),
+          isGroupChat: chat.isGroupChat,
+          chatName: chat.isGroupChat ? chat.chatName : sender.username,
+        }),
+        senderAvatar: sender.avatar || "",
+        type: "new_message",
+        messageId: messageData._id.toString(),
+      },
+      android: {
+        priority: "high",
+        notification: {
+          channelId: "chat_messages",
+          sound: "default",
+        },
+      },
+    };
+
+    await admin.messaging().send(message);
+  } catch (error) {
+    console.error("Error sending notification:", error);
+  }
+};
+
 exports.sendMessage = [
   handleFileUpload,
   catchAsync(async (req, res, next) => {
     const { chatId } = req.params;
     const { content, messageType = "text" } = req.body;
 
-    // 1) Check if chat exists and user is a member
+    // Check if chat exists and user is a member
     const chat = await Chat.findOne({
       _id: chatId,
       users: { $elemMatch: { $eq: req.user._id } },
@@ -53,15 +91,11 @@ exports.sendMessage = [
       return next(new AppError("Chat not found or user not a member", 404));
     }
 
-    // Check if this is the first message in the chat
     const isFirstMessage = (await Message.countDocuments({ chatId })) === 0;
-
-    // Early determination of message type and content
     const hasFile = !!req.file;
     const isPDF = hasFile && req.file.mimetype === "application/pdf";
     const finalMessageType = hasFile ? (isPDF ? "document" : "image") : "text";
 
-    // Create initial message data
     const messageData = {
       sender: req.user._id,
       chatId,
@@ -69,13 +103,12 @@ exports.sendMessage = [
       content: content || (hasFile ? req.file.originalname : ""),
     };
 
-    // 2) Handle file upload if exists
+    // Handle file upload if exists
     if (hasFile) {
       try {
         const fileStr = `data:${
           req.file.mimetype
         };base64,${req.file.buffer.toString("base64")}`;
-
         const uploadOptions = {
           folder: "react-native-chat-app",
           resource_type: "auto",
@@ -92,10 +125,9 @@ exports.sendMessage = [
 
         const result = await cloudinary.uploader.upload(fileStr, uploadOptions);
 
-        // Set file-related data
         messageData.fileUrl = isPDF
           ? result.secure_url + "?dl=1"
-          : result.secure_url; // Add download flag for PDFs
+          : result.secure_url;
         messageData.fileName = req.file.originalname;
         messageData.fileSize = result.bytes;
 
@@ -104,8 +136,8 @@ exports.sendMessage = [
             format: "pdf",
             resourceType: "raw",
             publicId: result.public_id,
-            version: result.version.toString(), // Ensure version is string
-            url: result.secure_url, // Store original URL too
+            version: result.version.toString(),
+            url: result.secure_url,
           };
         }
       } catch (error) {
@@ -116,25 +148,34 @@ exports.sendMessage = [
       }
     }
 
-    // Validate message content
     if (!messageData.content) {
       return next(new AppError("Message must have content", 400));
     }
 
     try {
-      // 3) Create single message
       let message = await Message.create(messageData);
-
-      // 4) Populate sender details
       message = await message.populate("sender", "username avatar");
-
-      // Update chat's latestMessage
       await Chat.findByIdAndUpdate(chatId, { latestMessage: message._id });
 
-      // If this is the first message, emit new chat notification
+      const io = req.app.get("io");
+
+      // Get room sockets to check active users
+      const room = await io.in(chatId).fetchSockets();
+      const activeUserIds = room
+        .map((s) => s.userData?._id?.toString())
+        .filter(Boolean);
+
+      // Send notifications to users not in the room
+      for (const user of chat.users) {
+        if (user._id.toString() === req.user._id.toString()) continue;
+
+        if (!activeUserIds.includes(user._id.toString())) {
+          await sendNotification(user, message, chat, req.user);
+        }
+      }
+
+      // Handle first message notification
       if (isFirstMessage) {
-        const io = req.app.get("io");
-        // Get the updated chat with latestMessage
         const updatedChat = await Chat.findById(chatId)
           .populate("users", "-password")
           .populate({
@@ -153,7 +194,6 @@ exports.sendMessage = [
         data: { message },
       });
     } catch (error) {
-      // If message creation fails, log error
       console.error("Message creation error:", error);
       return next(new AppError("Error creating message", 400));
     }
@@ -166,7 +206,6 @@ exports.getMessages = catchAsync(async (req, res, next) => {
   const limit = parseInt(req.query.limit) || 50;
   const skip = (page - 1) * limit;
 
-  // 1) Check if chat exists and user is a member
   const chat = await Chat.findOne({
     _id: chatId,
     users: { $elemMatch: { $eq: req.user._id } },
@@ -176,10 +215,9 @@ exports.getMessages = catchAsync(async (req, res, next) => {
     return next(new AppError("Chat not found or user not a member", 404));
   }
 
-  // 2) Get messages with pagination
   const messages = await Message.find({ chatId })
-    .populate("sender", "username avatar") // Only necessary fields
-    .select("-__v") // Exclude version key
+    .populate("sender", "username avatar")
+    .select("-__v")
     .sort("-createdAt")
     .skip(skip)
     .limit(limit);
@@ -188,7 +226,6 @@ exports.getMessages = catchAsync(async (req, res, next) => {
     return next(new AppError("No messages found", 404));
   }
 
-  // 3) Get total messages count for pagination
   const totalMessages = await Message.countDocuments({ chatId });
 
   res.status(200).json({
@@ -210,7 +247,6 @@ exports.getMessages = catchAsync(async (req, res, next) => {
 exports.markAsRead = catchAsync(async (req, res, next) => {
   const { messageId } = req.params;
 
-  // 1) Find message and verify user is part of the chat
   const message = await Message.findById(messageId).populate({
     path: "chatId",
     select: "users",
@@ -226,7 +262,6 @@ exports.markAsRead = catchAsync(async (req, res, next) => {
     );
   }
 
-  // 2) Add user to readBy if not already there
   if (!message.readBy.includes(req.user._id)) {
     message.readBy.push(req.user._id);
     await message.save();
@@ -234,8 +269,6 @@ exports.markAsRead = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: "success",
-    data: {
-      message,
-    },
+    data: { message },
   });
 });
