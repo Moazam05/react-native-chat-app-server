@@ -66,6 +66,7 @@ const sendNotification = async (receiver, messageData, chat, sender) => {
           channelId: "chat_messages",
           sound: "default",
         },
+        collapseKey: chat._id.toString(),
       },
     };
 
