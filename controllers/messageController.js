@@ -42,14 +42,12 @@ const sendNotification = async (receiver, messageData, chat, sender) => {
 
     const message = {
       token: receiver.fcmToken,
-      notification: {
+      data: {
         title: chat.isGroupChat ? chat.chatName : sender.username,
         body:
           messageData.messageType === "text"
             ? messageData.content
             : `Sent ${messageData.messageType}`,
-      },
-      data: {
         chatData: JSON.stringify({
           chatId: chat._id.toString(),
           userId: sender._id.toString(),
