@@ -42,6 +42,7 @@ const sendNotification = async (receiver, messageData, chat, sender) => {
 
     const message = {
       token: receiver.fcmToken,
+      // Remove notification object and only use data
       data: {
         title: chat.isGroupChat ? chat.chatName : sender.username,
         body:
@@ -60,11 +61,7 @@ const sendNotification = async (receiver, messageData, chat, sender) => {
       },
       android: {
         priority: "high",
-        notification: {
-          channelId: "chat_messages",
-          sound: "default",
-        },
-        collapseKey: chat._id.toString(),
+        collapseKey: messageData._id.toString(),
       },
     };
 
