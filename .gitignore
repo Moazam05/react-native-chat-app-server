@@ -7,9 +7,6 @@ node_modules/
 # Environment variables
 .env
 
-# Firebase credentials
-serviceAccountKey.json
-
 # Misc
 .DS_Store
 *.log
