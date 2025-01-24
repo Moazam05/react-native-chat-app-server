@@ -26,6 +26,8 @@ db.once("open", () => {
   console.log("Environment:", `${process.env.NODE_ENV}`.yellow);
 });
 
+console.log("HI");
+
 const port = process.env.PORT || 8000;
 const server = app.listen(port, () => {
   console.log(`Server in running on port ${port}`);
