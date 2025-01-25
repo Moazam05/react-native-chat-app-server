@@ -12,9 +12,10 @@ const initSocket = (server) => {
       origin: "*",
     },
   });
-
   // Store active users
   const activeUsers = new Map();
+  const userSessions = new Map();
+  const disconnectTimers = new Map();
 
   const logActiveUsers = () => {
     console.log("\nCurrently Active Users:".bold.green);
@@ -28,73 +29,98 @@ const initSocket = (server) => {
     console.log("Total active users:", activeUsers.size.toString().bold.blue);
   };
 
+  const handleHeartbeat = (socket) => {
+    if (socket.userData?._id) {
+      userSessions.set(socket.userData._id, Date.now());
+
+      // Clear any pending disconnect timer
+      const timer = disconnectTimers.get(socket.userData._id);
+      if (timer) {
+        clearTimeout(timer);
+        disconnectTimers.delete(socket.userData._id);
+      }
+    }
+  };
+
+  // Session cleanup
+  setInterval(() => {
+    const now = Date.now();
+    userSessions.forEach((lastActivity, userId) => {
+      if (now - lastActivity > 120000) {
+        const socketId = activeUsers.get(userId);
+        if (socketId) {
+          const socket = io.sockets.sockets.get(socketId);
+          if (socket) {
+            socket.disconnect(true);
+          }
+        }
+        userSessions.delete(userId);
+        activeUsers.delete(userId);
+        io.emit("user offline", userId);
+      }
+    });
+  }, 60000);
+
   io.on("connection", (socket) => {
     console.log("Connected to socket.io".bold.bgRed);
 
-    // Check user status
+    socket.on("heartbeat", () => handleHeartbeat(socket));
+
     socket.on("check user status", (userId) => {
       try {
         const isUserOnline = activeUsers.has(userId);
-        console.log(
-          `Status check for user ${userId}: ${
-            isUserOnline ? "online" : "offline"
-          }`
-        );
         io.emit(isUserOnline ? "user online" : "user offline", userId);
       } catch (error) {
         console.error("Error checking user status:", error);
       }
     });
-
     // Handle user setup
     socket.on("setup", async (userData) => {
       if (!userData._id) return;
-
       // Remove any existing connections for this user
       const existingSocketId = activeUsers.get(userData._id);
-      if (existingSocketId) {
+      if (existingSocketId && existingSocketId !== socket.id) {
         const existingSocket = io.sockets.sockets.get(existingSocketId);
         if (existingSocket) {
           existingSocket.disconnect(true);
         }
-        activeUsers.delete(userData._id);
       }
 
       socket.userData = userData;
       socket.join(userData._id);
       activeUsers.set(userData._id, socket.id);
-
+      userSessions.set(userData._id, Date.now());
       // Update user's online status
       await User.findByIdAndUpdate(userData._id, {
         isOnline: true,
         lastSeen: new Date(),
       });
-
       // Emit online status to all clients
       io.emit("user online", userData._id);
-
-      // Send current online users list to the connecting client
-      const onlineUsers = Array.from(activeUsers.keys());
-      socket.emit("online users", onlineUsers);
-
+      socket.emit("online users", Array.from(activeUsers.keys()));
       socket.emit("connected");
-
       logActiveUsers();
     });
-
     // Handle joining a chat room
     socket.on("join chat", async (roomId) => {
       if (!socket.userData?._id) return;
 
+      // First leave any existing rooms except user's own room
+      const rooms = [...socket.rooms];
+      rooms.forEach((room) => {
+        if (room !== socket.id && room !== socket.userData._id) {
+          socket.leave(room);
+        }
+      });
+
       socket.join(roomId);
-      console.log("User Joined Room:".bgMagenta, roomId);
+      console.log(`User ${socket.userData._id} Joined Room: ${roomId}`);
 
       try {
         // Get chat details
         const chat = await Chat.findById(roomId);
         if (!chat) return;
 
-        // Mark all unread messages as read for THIS user only
         await Message.updateMany(
           {
             chatId: roomId,
@@ -105,24 +131,15 @@ const initSocket = (server) => {
           }
         );
 
-        // Get the updated unread count (should be 0 for this user now)
-        const unreadCount = await Message.countDocuments({
-          chatId: roomId,
-          readBy: { $ne: socket.userData._id },
-        });
-
-        // Get last message for the chat list
         const lastMessage = await Message.findOne({ chatId: roomId })
           .sort({ createdAt: -1 })
           .populate("sender", "username avatar");
-
         // Update chat list for the joining user
         socket.emit("chat list update", {
           chatId: roomId,
-          unreadCount: 0, // Since they just joined, their unread count is 0
+          unreadCount: 0,
           lastMessage,
         });
-
         // Notify other users in the room about messages being read
         io.to(roomId).emit("messages read", {
           chatId: roomId,
@@ -132,12 +149,10 @@ const initSocket = (server) => {
         console.error("Error handling join chat:", error);
       }
     });
-
     // Handle chat list updates
     socket.on("update chat list", async () => {
       try {
         if (!socket.userData?._id) return;
-
         // Get fresh chat list
         const chats = await Chat.find({
           users: socket.userData._id,
@@ -148,7 +163,6 @@ const initSocket = (server) => {
             select: "username avatar",
           },
         });
-
         // Process each chat
         for (const chat of chats) {
           // Calculate unread count for current user
@@ -183,7 +197,6 @@ const initSocket = (server) => {
         chatId: room,
       });
     });
-
     // Handle new messages
     socket.on("new message", async (messageData) => {
       const chatId = messageData.chatId;
@@ -191,13 +204,11 @@ const initSocket = (server) => {
       try {
         const chat = await Chat.findById(chatId).populate("users");
         if (!chat) return;
-
         // For each user in the chat
         chat.users.forEach(async (user) => {
           if (user._id.toString() === messageData.sender._id) return;
 
           const socketId = activeUsers.get(user._id.toString());
-
           // Get current unread count for this user
           const unreadCount = await Message.countDocuments({
             chatId,
@@ -219,12 +230,10 @@ const initSocket = (server) => {
       }
     });
 
-    // Handle get chat updates
     socket.on("get chat updates", async () => {
       try {
         if (!socket.userData?._id) return;
 
-        // Get all chats for this user with unread counts
         const chats = await Chat.find({
           users: socket.userData._id,
         }).populate({
@@ -234,7 +243,6 @@ const initSocket = (server) => {
             select: "username avatar",
           },
         });
-
         // For each chat, count unread messages
         for (const chat of chats) {
           const unreadCount = await Message.countDocuments({
@@ -247,7 +255,7 @@ const initSocket = (server) => {
             socket.emit("chat list update", {
               chatId: chat._id,
               lastMessage: chat.latestMessage,
-              unreadCount: unreadCount,
+              unreadCount,
             });
           }
         }
@@ -255,33 +263,51 @@ const initSocket = (server) => {
         console.error("Error getting chat updates:", error);
       }
     });
-
     // Handle leaving a chat room
     socket.on("leave chat", (roomId) => {
       if (!socket.userData?._id) return;
       socket.leave(roomId);
       console.log("User Left Room:".bold.bgRed, roomId);
     });
-
     // App background
     socket.on("app background", () => {
+      if (socket.userData?._id) {
+        const disconnectTimer = setTimeout(async () => {
+          const socketId = activeUsers.get(socket.userData._id);
+          if (socketId === socket.id) {
+            await User.findByIdAndUpdate(socket.userData._id, {
+              isOnline: false,
+              lastSeen: new Date(),
+            });
+            activeUsers.delete(socket.userData._id);
+            userSessions.delete(socket.userData._id);
+            io.emit("user offline", socket.userData._id);
+          }
+        }, 300000); // 5 minutes timeout
+
+        disconnectTimers.set(socket.userData._id, disconnectTimer);
+      }
       console.log("User app in background:", socket.userData?._id);
     });
-
     // Handle disconnect
     socket.on("disconnect", async () => {
       console.log("User disconnected".bold.bgRed);
 
       if (socket.userData?._id) {
-        await User.findByIdAndUpdate(socket.userData._id, {
-          isOnline: false,
-          lastSeen: new Date(),
-        });
+        const userId = socket.userData._id;
 
-        activeUsers.delete(socket.userData._id);
-        io.emit("user offline", socket.userData._id);
+        if (activeUsers.get(userId) === socket.id) {
+          await User.findByIdAndUpdate(userId, {
+            isOnline: false,
+            lastSeen: new Date(),
+          });
 
-        logActiveUsers();
+          activeUsers.delete(userId);
+          userSessions.delete(userId);
+          disconnectTimers.delete(userId);
+          io.emit("user offline", userId);
+          logActiveUsers();
+        }
       }
     });
   });
